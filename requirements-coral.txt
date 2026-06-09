@@ -1,0 +1,13 @@
+# Python deps for the Ubuntu x86_64 + USB Coral deployment.
+# The Edge TPU runtime itself (libedgetpu) and edgetpu_compiler are system
+# packages installed by setup_coral_ubuntu.sh, not pip packages.
+
+ultralytics>=8.3.0
+opencv-python>=4.10.0
+python-dotenv>=1.0.0
+
+# TFLite interpreter + Edge TPU delegate loader. tflite-runtime is the slim
+# runtime ultralytics uses to run *_edgetpu.tflite models. If pip cannot find
+# a wheel for your Python version, see the notes in setup_coral_ubuntu.sh for
+# the feranick wheel index (maintained builds for newer Python).
+tflite-runtime>=2.14.0

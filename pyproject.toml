@@ -1,0 +1,20 @@
+[project]
+name = "snitch"
+version = "0.1.0"
+description = "Watches a Hikvision camera with YOLO and tells on everything it sees."
+requires-python = ">=3.9"
+dependencies = [
+    "ultralytics>=8.3.0",
+    "opencv-python>=4.10.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+snitch = "snitch:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["snitch"]
