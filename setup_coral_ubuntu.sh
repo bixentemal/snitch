@@ -31,6 +31,8 @@ curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
   | sudo gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg
 echo "deb [signed-by=/usr/share/keyrings/coral-edgetpu.gpg] https://packages.cloud.google.com/apt coral-edgetpu-stable main" \
   | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list >/dev/null
+# Remove legacy unsigned entry that older install instructions added via apt-key.
+sudo apt-key del "$(sudo apt-key list 2>/dev/null | grep -B1 'packages.cloud.google' | grep '^pub' | awk '{print $2}' | cut -d/ -f2)" 2>/dev/null || true
 
 sudo apt-get update
 
@@ -55,16 +57,37 @@ python3 -m venv .venv-coral
 source .venv-coral/bin/activate
 pip install --upgrade pip
 
-# tflite-runtime wheels are not published for every Python version. Try the
-# normal install first; if it fails, fall back to feranick's maintained index
-# (https://github.com/feranick/TFlite-builds) which has builds for newer Python.
-if ! pip install -r requirements-coral.txt; then
-  echo
-  echo "tflite-runtime install failed for $(python3 --version)."
-  echo "Installing other deps, then fetch a matching tflite-runtime wheel from:"
-  echo "  https://github.com/feranick/TFlite-builds/releases"
-  echo "and:  pip install <downloaded-wheel>.whl"
+# tflite-runtime wheels are not published for every Python version. Try PyPI
+# first; if it fails, auto-fetch a matching wheel from feranick's maintained
+# builds (https://github.com/feranick/TFlite-builds).
+if ! pip install -r requirements-coral.txt 2>/dev/null; then
+  echo "tflite-runtime not on PyPI for $(python3 --version) — fetching feranick build..."
   grep -v '^tflite-runtime' requirements-coral.txt | pip install -r /dev/stdin
+
+  PY_TAG=$(python3 -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+  ARCH="linux_x86_64"
+  # Search all releases (not just /latest) because feranick sometimes publishes
+  # platform-specific wheels in separate releases.
+  WHEEL_URL=$(curl -fsSL "https://api.github.com/repos/feranick/TFlite-builds/releases?per_page=30" \
+    | python3 -c "
+import sys, json
+releases = json.load(sys.stdin)
+for r in releases:
+    for a in r.get('assets', []):
+        if '${PY_TAG}' in a['name'] and '${ARCH}' in a['name'] and a['name'].endswith('.whl'):
+            print(a['browser_download_url'])
+            sys.exit(0)
+")
+
+  if [[ -z "$WHEEL_URL" ]]; then
+    echo "ERROR: no tflite-runtime wheel found for ${PY_TAG} ${ARCH}."
+    echo "Check manually: https://github.com/feranick/TFlite-builds/releases"
+    echo "Then: source .venv-coral/bin/activate && pip install <wheel>.whl"
+    exit 1
+  fi
+
+  echo "Installing: $WHEEL_URL"
+  pip install "$WHEEL_URL"
 fi
 
 # Register the `snitch` console command (deps already installed above).

@@ -2,9 +2,17 @@
 # The Edge TPU runtime itself (libedgetpu) and edgetpu_compiler are system
 # packages installed by setup_coral_ubuntu.sh, not pip packages.
 
+# CPU-only torch — the Coral does all inference via tflite-runtime; CUDA is
+# not used and the full CUDA wheels are ~2 GB we don't need.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
 ultralytics>=8.3.0
 opencv-python>=4.10.0
 python-dotenv>=1.0.0
+# tensorflow is needed by export_edgetpu.py (pt -> TFLite conversion).
+# Not used at inference time (tflite-runtime handles that).
+tensorflow>=2.16.0,<=2.19.0
+numpy>=1.26.0,<2.2.0
 
 # TFLite interpreter + Edge TPU delegate loader. tflite-runtime is the slim
 # runtime ultralytics uses to run *_edgetpu.tflite models. If pip cannot find
