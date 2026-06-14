@@ -47,6 +47,28 @@ First run downloads `yolov8n.pt` (~6 MB). Press `q` to quit.
 | Live window | *(default)* | annotated preview with boxes, labels, FPS |
 | Text / data export | `--headless` | detections to stdout (no GUI needed) |
 
+### Region of interest (ROI)
+
+Gate detection to a sub-window of the frame — anything whose box center falls
+outside the region is ignored. Inference still runs on the full frame, so
+accuracy is unchanged; the ROI just filters what gets reported and drawn.
+
+```bash
+# Interactive: in the live window, press 'r' to drag a box, 'x' to clear.
+snitch                          # the box is saved to roi.json, reloaded next launch
+snitch --roi 0.25 0 0.75 1      # set it from the CLI (fractions of the frame)
+snitch --roi-file front.json    # use a different ROI file
+```
+
+Press `v` in the window to toggle a preview that zooms the ROI region to fill
+the whole window — exactly the pixels snitch is judging, scaled up. Press `v`
+again to return to the full frame with the ROI outline. It's a view-only toggle:
+it doesn't change detection, `roi.json`, or headless output.
+
+ROIs are stored as fractions of the frame, so the same region works whether you
+run the main or the sub stream. `--roi` overrides whatever is in the file. The
+ROI is applied in `--headless` mode too (using the CLI value or the saved file).
+
 Text mode is meant for CLI use, SSH, logging, and piping into other tools.
 It reports timestamp, per-class counts, confidence, and bounding-box coords:
 
@@ -123,3 +145,4 @@ the model on an x86 box (or Docker/Colab) and copy the `_edgetpu.tflite` over.
 | `requirements.txt` | torch/desktop deps |
 | `requirements-coral.txt` | Coral deployment deps |
 | `.env.example` | camera config template |
+| `roi.json` | saved region of interest (created on first ROI select; gitignored) |

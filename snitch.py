@@ -12,6 +12,12 @@ Usage:
     snitch --conf 0.4           # confidence threshold
     snitch --classes 0          # only detect 'person' (COCO id 0)
 
+Region of interest — gate detection to a sub-window of the frame:
+    snitch                                  # press 'r' to drag a box, 'x' to clear
+    snitch --roi 0.25 0 0.75 1              # fractions of the frame (overrides file)
+    # The interactive box is saved to roi.json and reloaded on next launch.
+    # Press 'v' to toggle a preview of just the ROI region (what snitch sees).
+
 Text / data-export mode (no window — for CLI, SSH, logging, piping):
     snitch --headless                       # human-readable summary
     snitch --headless --only-detections     # skip empty frames
@@ -171,6 +177,60 @@ def emit_detections(r, ts, fps, fmt, only_detections) -> bool:
     return True
 
 
+def load_roi(path: str):
+    """Load a normalized ROI [x1, y1, x2, y2] (fractions 0-1) from a JSON file.
+
+    Returns None when the file is missing or doesn't hold a valid ROI.
+    """
+    try:
+        with open(path) as f:
+            roi = json.load(f).get("roi")
+        if roi and len(roi) == 4:
+            return [float(v) for v in roi]
+    except (FileNotFoundError, ValueError, TypeError):
+        pass
+    return None
+
+
+def save_roi(path: str, roi) -> None:
+    """Persist a normalized ROI to a JSON file (roi=None clears it)."""
+    with open(path, "w") as f:
+        json.dump({"roi": roi}, f)
+
+
+def roi_pixels(roi, w: int, h: int):
+    """Convert a normalized ROI to integer pixel corners for a w×h frame."""
+    if roi is None:
+        return None
+    x1, y1, x2, y2 = roi
+    return [int(x1 * w), int(y1 * h), int(x2 * w), int(y2 * h)]
+
+
+def filter_to_roi(r, roi_px):
+    """Keep only detections whose box center falls inside the ROI rectangle."""
+    if roi_px is None:
+        return r
+    x1, y1, x2, y2 = roi_px
+    keep = []
+    for i, (bx1, by1, bx2, by2) in enumerate(r.boxes.xyxy.tolist()):
+        cx, cy = (bx1 + bx2) / 2.0, (by1 + by2) / 2.0
+        if x1 <= cx <= x2 and y1 <= cy <= y2:
+            keep.append(i)
+    return r[keep]
+
+
+def select_roi(window: str, frame):
+    """Drag a box in the preview window. Returns a normalized ROI, or None.
+
+    ENTER/SPACE confirms the selection; 'c' (or an empty box) cancels.
+    """
+    h, w = frame.shape[:2]
+    x, y, bw, bh = cv2.selectROI(window, frame, showCrosshair=True)
+    if bw == 0 or bh == 0:
+        return None
+    return [x / w, y / h, (x + bw) / w, (y + bh) / h]
+
+
 def is_edgetpu_model(model_path: str) -> bool:
     """Coral Edge TPU models are compiled TFLite files."""
     return model_path.endswith("_edgetpu.tflite")
@@ -238,6 +298,20 @@ def parse_args():
         "--device", default=None, help="mps / cpu / 0 (auto if unset; torch only)"
     )
     p.add_argument(
+        "--roi",
+        type=float,
+        nargs=4,
+        metavar=("X1", "Y1", "X2", "Y2"),
+        default=None,
+        help="gate detection to a sub-window, as fractions 0-1 "
+        "(e.g. 0.25 0 0.75 1). Overrides --roi-file.",
+    )
+    p.add_argument(
+        "--roi-file",
+        default="roi.json",
+        help="JSON file to load/save the interactive ROI (default: roi.json)",
+    )
+    p.add_argument(
         "--headless",
         action="store_true",
         help="no preview window; export detections to stdout",
@@ -272,6 +346,10 @@ def main():
     print(f"Loading {args.model} (backend={backend}, device={device})...")
     model = YOLO(args.model, task="detect")
 
+    roi = args.roi if args.roi else load_roi(args.roi_file)
+    if roi:
+        print(f"ROI active: {[round(v, 3) for v in roi]} (fractions of frame)")
+
     url = build_rtsp_url(args.stream)
     safe_url = url.split("@")[-1]
     print(f"Connecting to rtsp://***@{safe_url}")
@@ -285,11 +363,18 @@ def main():
             reader.stop()
             raise SystemExit("Timed out waiting for video.")
         time.sleep(0.1)
-    print("Streaming. Press 'q' in the window (or Ctrl+C) to quit.")
+    if args.headless:
+        print("Streaming. Press Ctrl+C to quit.")
+    else:
+        print(
+            "Streaming. In the window: 'r' select ROI, 'v' toggle ROI view, "
+            "'x' clear ROI, 'q' quit (or Ctrl+C)."
+        )
 
     prev = time.time()
     fps = 0.0
     last_emit = 0.0
+    crop_view = False  # toggle: show only the ROI region, filling the window
     try:
         while True:
             frame = reader.read()
@@ -306,7 +391,8 @@ def main():
             if args.imgsz:
                 predict_kwargs["imgsz"] = args.imgsz
             results = model.predict(frame, **predict_kwargs)
-            r = results[0]
+            roi_px = roi_pixels(roi, frame.shape[1], frame.shape[0])
+            r = filter_to_roi(results[0], roi_px)
 
             now = time.time()
             dt = now - prev
@@ -322,18 +408,54 @@ def main():
                         last_emit = now
             else:
                 annotated = r.plot()
+                if crop_view and roi_px:
+                    x1, y1, x2, y2 = roi_px
+                    crop = annotated[y1:y2, x1:x2]
+                    if crop.size == 0:  # degenerate ROI — show the full frame
+                        display = annotated
+                    else:  # zoom the ROI to fill the original window size
+                        h, w = annotated.shape[:2]
+                        display = cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
+                    tag = "  [ROI view]"
+                else:
+                    display = annotated
+                    if roi_px:
+                        cv2.rectangle(
+                            display,
+                            (roi_px[0], roi_px[1]),
+                            (roi_px[2], roi_px[3]),
+                            (0, 200, 255),
+                            2,
+                        )
+                    tag = ""
                 cv2.putText(
-                    annotated,
-                    f"{fps:.1f} FPS  {len(r.boxes)} obj",
+                    display,
+                    f"{fps:.1f} FPS  {len(r.boxes)} obj{tag}",
                     (10, 28),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.8,
                     (0, 255, 0),
                     2,
                 )
-                cv2.imshow("snitch 🐀", annotated)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
+                cv2.imshow("snitch 🐀", display)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
                     break
+                elif key == ord("r"):
+                    sel = select_roi("snitch 🐀", frame)
+                    if sel:
+                        roi = sel
+                        save_roi(args.roi_file, roi)
+                        print(
+                            f"ROI saved to {args.roi_file}: "
+                            f"{[round(v, 3) for v in roi]}"
+                        )
+                elif key == ord("x") and roi is not None:
+                    roi = None
+                    save_roi(args.roi_file, None)
+                    print(f"ROI cleared ({args.roi_file})")
+                elif key == ord("v"):
+                    crop_view = not crop_view
     except KeyboardInterrupt:
         pass
     finally:

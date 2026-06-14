@@ -1,4 +1,5 @@
 .env
+roi.json
 .venv/
 __pycache__/
 *.pt
