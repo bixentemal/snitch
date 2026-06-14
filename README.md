@@ -123,9 +123,18 @@ automatically.
   Inference size must match the value used at export.
 - **Clock**: `setup_coral_ubuntu.sh` installs `libedgetpu1-std`. Swap to
   `libedgetpu1-max` for higher clock (faster, hotter, more power).
-- **tflite-runtime wheel**: if pip has no wheel for your Python version, grab a
-  matching one from <https://github.com/feranick/TFlite-builds/releases>
-  (the script prints this hint and installs everything else).
+- **tflite-runtime wheel**: if pip has no wheel for your Python version, the
+  setup script automatically fetches a matching one from
+  <https://github.com/feranick/TFlite-builds/releases> (it only errors out if
+  no build exists for your Python/arch).
+
+### Older CPUs without AVX2 (e.g. Ivy Bridge)
+
+Google's prebuilt Coral packages are compiled with AVX2 and crash with
+`Illegal instruction (SIGILL)` on pre-Haswell CPUs (Ivy Bridge, Sandy Bridge).
+If that's your machine, `libedgetpu` and friends must be built from source with
+`-march=ivybridge -mno-avx2` — see [`CORAL_IVY_BRIDGE_SETUP.md`](CORAL_IVY_BRIDGE_SETUP.md)
+for the full from-source procedure.
 
 ### ARM Ubuntu (Jetson / Pi)
 
@@ -142,6 +151,7 @@ the model on an x86 box (or Docker/Colab) and copy the `_edgetpu.tflite` over.
 | `pyproject.toml` | packaging; provides the `snitch` console command |
 | `export_edgetpu.py` | Compile a `.pt` to an Edge TPU TFLite (run on x86 Ubuntu) |
 | `setup_coral_ubuntu.sh` | Install Coral runtime + compiler + venv on Ubuntu |
+| `CORAL_IVY_BRIDGE_SETUP.md` | From-source build notes for non-AVX2 CPUs (Ivy Bridge) |
 | `requirements.txt` | torch/desktop deps |
 | `requirements-coral.txt` | Coral deployment deps |
 | `.env.example` | camera config template |
